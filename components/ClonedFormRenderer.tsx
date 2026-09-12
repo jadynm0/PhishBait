@@ -1,87 +1,104 @@
 "use client";
-import React, { useEffect, useRef } from "react";
+import React, { memo, useEffect, useRef, useState } from "react";
 
-/**
- * Renders sanitized, pre-cloned scam-page HTML and intercepts any form
- * submission so it posts to our own /api/target-logs instead of going
- * anywhere real (clone-phish.mjs already stripped scripts/handlers and
- * neutralized form actions before this ever runs).
- */
+const CloneMarkup = memo(function CloneMarkup({ html, containerRef }: { html: string; containerRef: React.RefObject<HTMLDivElement> }) {
+  return <div ref={containerRef} dangerouslySetInnerHTML={{ __html: html }} />;
+});
+
+// Only server-sanitized HTML may be passed to this component.
 export default function ClonedFormRenderer({ html }: { html: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [status, setStatus] = useState<{ kind: string; text: string } | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
-    const forms = container.querySelectorAll("form");
-
-    const doSubmit = async (form: HTMLFormElement) => {
+    container.dataset.phishbaitReady = "true";
+    const pending = new Set<HTMLFormElement>();
+    const controllers = new Set<AbortController>();
+    let disposed = false;
+    const handleSubmit = async (event: Event) => {
+      event.preventDefault();
+      const form = event.target;
+      if (!(form instanceof HTMLFormElement) || pending.has(form) || !form.reportValidity()) return;
       const data = new FormData(form);
-      const filled = Array.from(data.values()).filter(
-        (v) => String(v).trim().length > 0
-      ).length;
-
-      const fullName =
-        (data.get("name") as string) ||
-        (data.get("fullname") as string) ||
-        (data.get("full_name") as string) ||
-        "Unknown";
-      const email = (data.get("email") as string) || "unknown@example.com";
-
+      const fieldsFilled = Array.from(data.values()).filter(v => typeof v === "string" && v.trim()).length;
+      const name = ["name", "fullname", "full_name", "fullName"].map(key => data.get(key)).find(Boolean);
+      const controller = new AbortController();
+      controllers.add(controller);
+      pending.add(form);
+      form.setAttribute("aria-busy", "true");
+      const buttons = Array.from(form.querySelectorAll<HTMLButtonElement | HTMLInputElement>('button, input[type="submit"], input[type="reset"]'));
+      const wasDisabled = buttons.map(button => button.disabled);
+      buttons.forEach(button => { button.disabled = true; });
+      setStatus({ kind: "pending", text: "Saving demo submission…" });
+      const timeout = setTimeout(() => controller.abort(), 15000);
       try {
-        await fetch("/api/target-logs", {
+        const response = await fetch("/api/target-logs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fullName, email, fieldsFilled: filled }),
+          body: JSON.stringify({ fullName: name || "Unknown", email: data.get("email") || "unknown@example.com", fieldsFilled }),
+          signal: controller.signal,
         });
+        if (!response.ok) throw new Error(`Server returned ${response.status}`);
+        if (!disposed) {
+          form.reset();
+          setStatus({ kind: "success", text: `Demo submission saved: ${fieldsFilled} fields filled. View the result in the submission log.` });
+        }
       } catch {
-        // demo should never hard-fail on a logging error
+        if (!disposed) setStatus({ kind: "error", text: "Could not confirm the save. Your fields are preserved. Check the submission log before retrying." });
+      } finally {
+        clearTimeout(timeout);
+        controllers.delete(controller);
+        pending.delete(form);
+        form.removeAttribute("aria-busy");
+        buttons.forEach((button, i) => { button.disabled = wasDisabled[i]; });
       }
-
-      const banner = document.createElement("div");
-      banner.textContent = `Submitted (${filled} fields recorded — sandboxed clone, nothing left this app).`;
-      banner.style.cssText =
-        "position:fixed;bottom:16px;right:16px;background:#065f46;color:white;padding:10px 16px;border-radius:6px;font-family:monospace;font-size:12px;z-index:9999;box-shadow:0 2px 8px rgba(0,0,0,.3)";
-      document.body.appendChild(banner);
-      setTimeout(() => banner.remove(), 3500);
-
-      form.reset();
     };
-
-    const handleSubmit = (e: Event) => {
-      e.preventDefault();
-      doSubmit(e.currentTarget as HTMLFormElement);
+    const handleClick = (event: MouseEvent) => {
+      if (!(event.target instanceof Element)) return;
+      const button = event.target.closest('[data-phishbait-submit="true"]');
+      const form = button?.closest("form");
+      if (!form || pending.has(form)) return;
+      event.preventDefault();
+      form.requestSubmit();
     };
-
-    // Many cloned pages drive "submit" via a plain <button type="button">
-    // with JS we already stripped, rather than a real submit input. Catch
-    // clicks on any button/input inside a form as a fallback trigger.
-    const handleClick = (e: Event) => {
-      const target = e.target as HTMLElement;
-      const button = target.closest("button, input[type='submit'], input[type='button']");
-      if (!button) return;
-      const form = button.closest("form");
-      if (!form) return;
-      e.preventDefault();
-      doSubmit(form as HTMLFormElement);
-    };
-
-    forms.forEach((f) => f.addEventListener("submit", handleSubmit));
+    const handleReset = () => setStatus(null);
+    container.addEventListener("submit", handleSubmit);
     container.addEventListener("click", handleClick);
-
+    container.addEventListener("reset", handleReset);
     return () => {
-      forms.forEach((f) => f.removeEventListener("submit", handleSubmit));
+      delete container.dataset.phishbaitReady;
+      disposed = true;
+      controllers.forEach(controller => controller.abort());
+      container.removeEventListener("submit", handleSubmit);
       container.removeEventListener("click", handleClick);
+      container.removeEventListener("reset", handleReset);
     };
   }, [html]);
 
+  const fillSample = () => {
+    const values: Record<string, string> = { name: "Alex Example", email: "alex@example.com", phone: "202-555-0142", address: "123 Example Street", notes: "Fictional delivery for the PhishBait demo." };
+    containerRef.current?.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea").forEach(field => {
+      if (values[field.name] && !field.disabled && !field.closest('[aria-busy="true"]')) field.value = values[field.name];
+    });
+    setStatus(null);
+  };
+
   return (
-    <div>
-      <div className="bg-yellow-100 text-yellow-900 text-xs text-center py-1 font-mono">
-        SANDBOXED CLONE — hosted locally, form posts stay on this server
+    <div className="min-h-screen bg-slate-100 text-slate-900">
+      <div className="bg-amber-100 text-amber-950 px-4 py-3 text-center text-sm">
+        PhishBait training sandbox · Use fictional data only · No real delivery or payment
       </div>
-      <div ref={containerRef} dangerouslySetInnerHTML={{ __html: html }} />
+      <nav aria-label="Demo tools" className="flex flex-wrap justify-center gap-5 p-4 text-sm">
+        <a href="/" className="underline">Fleet operator</a>
+        <a href="/scammer-db" className="underline">Submission log</a>
+        <button type="button" onClick={fillSample} disabled={status?.kind === "pending"} className="underline disabled:opacity-50">Fill sample data</button>
+      </nav>
+      <div aria-live="polite" className="max-w-2xl mx-auto px-4">
+        {status && <p role={status.kind === "error" ? "alert" : "status"} className={`rounded-lg border p-4 mb-4 ${status.kind === "error" ? "bg-red-50 text-red-800" : "bg-white text-slate-800"}`}>{status.text}</p>}
+      </div>
+      <CloneMarkup html={html} containerRef={containerRef} />
     </div>
   );
 }

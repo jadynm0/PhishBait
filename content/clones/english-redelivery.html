@@ -1,0 +1,36 @@
+<main class="max-w-2xl mx-auto px-4 pb-12">
+  <article class="rounded-2xl overflow-hidden bg-white shadow-lg border border-slate-200">
+    <header class="bg-blue-950 text-white p-8">
+      <p class="text-xs font-bold uppercase tracking-widest text-blue-200">Parcel Services · Fictional training example</p>
+      <h1 class="text-3xl font-bold mt-3">Arrange your redelivery</h1>
+      <p class="mt-3 text-blue-100">An English reconstruction of a package-delivery phishing scenario.</p>
+    </header>
+    <div class="p-6 sm:p-8">
+      <div class="rounded-xl bg-amber-50 border border-amber-200 p-4 mb-6">
+        <p class="font-semibold">Delivery status: address confirmation requested</p>
+        <p class="text-sm mt-1">Demo tracking reference: PB-2048-EXAMPLE. Enter fictional details to complete this training exercise.</p>
+      </div>
+      <form class="space-y-5">
+        <fieldset class="space-y-4">
+          <legend class="text-lg font-semibold mb-3">Recipient details</legend>
+          <div><label for="demo-name" class="block text-sm font-medium mb-1">Full name</label><input id="demo-name" name="name" required maxlength="120" autocomplete="off" placeholder="Alex Example" class="w-full rounded-lg border border-slate-300 px-3 py-3" /></div>
+          <div class="grid sm:grid-cols-2 gap-4">
+            <div><label for="demo-email" class="block text-sm font-medium mb-1">Email address</label><input id="demo-email" name="email" type="email" required autocomplete="off" placeholder="alex@example.com" class="w-full rounded-lg border border-slate-300 px-3 py-3" /></div>
+            <div><label for="demo-phone" class="block text-sm font-medium mb-1">Phone number</label><input id="demo-phone" name="phone" type="tel" required autocomplete="off" placeholder="202-555-0142" class="w-full rounded-lg border border-slate-300 px-3 py-3" /></div>
+          </div>
+          <div><label for="demo-address" class="block text-sm font-medium mb-1">Delivery address</label><input id="demo-address" name="address" required autocomplete="off" placeholder="123 Example Street" class="w-full rounded-lg border border-slate-300 px-3 py-3" /></div>
+          <div><label for="demo-notes" class="block text-sm font-medium mb-1">Delivery notes (optional)</label><textarea id="demo-notes" name="notes" rows="3" maxlength="2000" placeholder="Fictional delivery instructions" class="w-full rounded-lg border border-slate-300 px-3 py-3"></textarea></div>
+        </fieldset>
+        <p class="text-sm text-slate-500">This exercise does not ask for passwords or payment details. Only a name, email and count of filled fields are saved in the demo log.</p>
+        <div class="flex flex-wrap gap-3">
+          <button type="submit" class="flex-1 rounded-lg bg-blue-800 hover:bg-blue-700 text-white px-5 py-3 font-semibold disabled:opacity-50">Confirm demo redelivery</button>
+          <button type="reset" class="rounded-lg border border-slate-300 px-5 py-3 hover:bg-slate-100 disabled:opacity-50">Reset form</button>
+        </div>
+      </form>
+      <details class="mt-6 border-t border-slate-200 pt-5">
+        <summary class="cursor-pointer font-medium">What makes this a phishing scenario?</summary>
+        <p class="mt-3 text-sm text-slate-600">Unexpected delivery messages can lead to pages requesting personal details or a small payment. This fictional reconstruction lets you test the workflow on your own server. It is not affiliated with a courier and is not a captured PhishTank page.</p>
+      </details>
+    </div>
+  </article>
+</main>

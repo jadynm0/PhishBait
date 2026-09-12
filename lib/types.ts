@@ -26,6 +26,8 @@ export interface SwarmNode {
   debugUrl: string;
   personaName: string;
   status: SwarmStatus;
+  error?: string;
+  ended?: boolean;
 }
 
 export interface LaunchRequestBody {

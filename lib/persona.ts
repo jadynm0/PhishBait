@@ -1,10 +1,4 @@
-import OpenAI from "openai";
 import { VictimPersona } from "./types";
-
-const openrouter = new OpenAI({
-  baseURL: "https://openrouter.ai/api/v1",
-  apiKey: process.env.OPENROUTER_API_KEY,
-});
 
 // Well-known, publicly documented issuer test card numbers (Stripe/Visa/etc.).
 // These are not real accounts and are the standard numbers used industry-wide
@@ -42,17 +36,23 @@ interface RawPersonaShape {
 }
 
 /**
- * Generates synthetic (non-real) persona records via OpenRouter, then attaches
+ * Generates synthetic (non-real) persona records via the Anthropic API, then attaches
  * a well-known payment-industry test card number locally (never LLM-generated).
  */
 export async function generateVictimPersonas(
   targetUrl: string,
   count: number = 5
 ): Promise<VictimPersona[]> {
+  const apiKey = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!apiKey) throw new Error("Server is missing ANTHROPIC_API_KEY.");
+  if (!Number.isInteger(count) || count < 1 || count > 10) {
+    throw new Error("Persona count must be an integer between 1 and 10.");
+  }
+
   const prompt = `Generate ${count} completely fictional, clearly-synthetic decoy identity records for use as junk/noise data in a security demo.
 None of these should resemble any real person. Output MUST be a valid JSON array of objects with exactly these fields:
 - fullName (string, invented full name)
-- email (string, invented address using a common consumer domain like gmail.com, yahoo.com, comcast.net)
+- email (string, invented address using the reserved domain example.com)
 - phone (string, standard 10-digit North American format, using a clearly fake exchange like 555)
 - address (string, a plausible-looking but invented street/city/postal code)
 - ssnOrId (string, a placeholder identifier in the format 000-00-0000, never a real-looking SSN)
@@ -60,23 +60,54 @@ None of these should resemble any real person. Output MUST be a valid JSON array
 
 Keep everything obviously fictional and lighthearted. Return ONLY the raw JSON array, no markdown fences, no commentary.`;
 
-  const res = await openrouter.chat.completions.create({
-    model: "anthropic/claude-3.5-sonnet",
-    messages: [{ role: "user", content: prompt }],
-    temperature: 0.9,
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: process.env.ANTHROPIC_MODEL?.trim() || "claude-sonnet-4-6",
+      max_tokens: 8192,
+      messages: [{ role: "user", content: prompt }],
+    }),
+    signal: AbortSignal.timeout(60000),
   });
 
-  const raw = res.choices[0]?.message?.content || "[]";
+  if (!response.ok) {
+    const detail = response.status === 401
+      ? "Check ANTHROPIC_API_KEY in .env.local. Use a key from your Anthropic API account."
+      : response.status === 402
+        ? "Check credits on the Anthropic account associated with your API key."
+        : response.status === 429
+          ? "Anthropic rate limit reached. Wait a moment and try again."
+          : "Check your Anthropic account, model access and service status.";
+    throw new Error(`Anthropic API error (${response.status}). ${detail}`);
+  }
+  const res = await response.json() as {
+    content?: { type: string; text?: string }[];
+    stop_reason?: string;
+  };
+  if (res.stop_reason === "max_tokens") {
+    throw new Error("Claude's persona response was cut short. Try a smaller fleet.");
+  }
+  const raw = res.content?.filter(block => block.type === "text").map(block => block.text || "").join("") || "";
   const cleaned = raw.replace(/```json|```/g, "").trim();
 
-  let parsedRaw: RawPersonaShape[];
+  let parsedRaw: unknown;
   try {
     parsedRaw = JSON.parse(cleaned);
-  } catch (err) {
-    throw new Error(`Failed to parse persona JSON from OpenRouter: ${err}`);
+  } catch {
+    throw new Error("Claude returned invalid persona JSON. Try again.");
+  }
+  const fields = ["fullName", "email", "phone", "address", "ssnOrId", "notes"] as const;
+  if (!Array.isArray(parsedRaw) || parsedRaw.length !== count ||
+      !parsedRaw.every(p => p && fields.every(field => typeof p[field] === "string"))) {
+    throw new Error("Claude returned incomplete persona records. Try again.");
   }
 
-  return parsedRaw.map((p) => ({
+  return (parsedRaw as RawPersonaShape[]).map((p) => ({
     ...p,
     creditCard: randomTestCard(),
   }));

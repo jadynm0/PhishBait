@@ -9,22 +9,24 @@ const DEFAULT_TARGET = APP_URL + "/target-portal";
 interface CloneMeta {
   slug: string;
   title: string;
-  sourceUrl: string;
-  clonedAt: string;
+  sourceUrl?: string | null;
+  clonedAt?: string;
 }
 
 export default function WarRoom() {
   const [url, setUrl] = useState(DEFAULT_TARGET);
   const [clones, setClones] = useState<CloneMeta[]>([]);
-  const [fleetCount, setFleetCount] = useState(5);
+  const [fleetCount, setFleetCount] = useState(1);
   const [sessions, setSessions] = useState<SwarmNode[]>([]);
   const [poisonCount, setPoisonCount] = useState(0);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const sessionIds = useRef<string[]>([]);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
+    startPolling();
     fetch("/api/clones")
       .then((r) => r.json())
       .then((d) => setClones(d.clones || []))
@@ -41,6 +43,14 @@ export default function WarRoom() {
         const res = await fetch("/api/target-logs");
         const data = await res.json();
         setPoisonCount(data.count);
+        if (sessionIds.current.length) {
+          const requestedIds = sessionIds.current.join(",");
+          const statusRes = await fetch(`/api/swarm/status?ids=${encodeURIComponent(requestedIds)}`, { cache: "no-store" });
+          if (statusRes.ok && sessionIds.current.join(",") === requestedIds) {
+            const updates: { sessions: SwarmNode[] } = await statusRes.json();
+            setSessions(current => current.map(node => updates.sessions.find(update => update.sessionId === node.sessionId) ?? node));
+          }
+        }
       } catch {
         // ignore transient poll failures
       }
@@ -52,6 +62,7 @@ export default function WarRoom() {
     setError(null);
     setWarning(null);
     setSessions([]);
+    sessionIds.current = [];
 
     try {
       const res = await fetch("/api/swarm/launch", {
@@ -67,6 +78,7 @@ export default function WarRoom() {
         return;
       }
 
+      sessionIds.current = data.sessions.map((node: SwarmNode) => node.sessionId);
       setSessions(data.sessions);
       if (data.warning) setWarning(data.warning);
       startPolling();
@@ -82,7 +94,7 @@ export default function WarRoom() {
       <div className="flex justify-between items-center border-b border-slate-800 pb-4 mb-6 flex-wrap gap-4">
         <div className="flex items-center gap-3">
           <Skull className="text-red-500 w-8 h-8" />
-          <h1 className="text-2xl font-black tracking-wider uppercase">PhishBait // Fleet Operator</h1>
+          <h1 className="text-2xl font-black tracking-wider uppercase">PhishBait</h1>
         </div>
         <div className="flex gap-6">
           <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded">
@@ -91,14 +103,14 @@ export default function WarRoom() {
           </div>
           <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded">
             <span className="text-xs text-slate-400 block uppercase">Active Steel Fleet</span>
-            <span className="text-2xl font-mono font-bold text-blue-400">{sessions.length} Nodes</span>
+            <span className="text-2xl font-mono font-bold text-blue-400">{sessions.filter(node => !node.ended).length} Nodes</span>
           </div>
         </div>
       </div>
 
       <div className="flex gap-4 mb-3 flex-wrap">
         <select
-          className="bg-slate-900 border border-slate-800 rounded px-3 py-3 text-sm font-mono"
+          className="bg-slate-900 border border-slate-800 rounded px-3 py-3 text-sm font-mono max-w-full"
           onChange={(e) => {
             if (e.target.value) setUrl(APP_URL + e.target.value);
           }}
@@ -129,7 +141,7 @@ export default function WarRoom() {
         />
         <button
           onClick={startSwarm}
-          disabled={isRunning || !url}
+          disabled={isRunning || !url || sessions.some(node => !node.ended)}
           className="bg-red-600 hover:bg-red-500 px-8 py-3 rounded font-bold uppercase tracking-wider flex items-center gap-2 disabled:opacity-50"
         >
           <Zap className="w-4 h-4" /> Unleash Swarm
@@ -156,14 +168,17 @@ export default function WarRoom() {
               <span className="font-mono text-slate-300">NODE #{idx + 1} // Persona: {sess.personaName}</span>
               <span className="flex items-center gap-1 text-emerald-400 font-mono">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                ACTIVE
+                {sess.status.toUpperCase()}{sess.ended ? " · ENDED" : ""}
               </span>
             </div>
-            <iframe
-              src={sess.debugUrl}
-              className="w-full h-80 border-none"
-              title={`Node ${idx + 1}`}
-            />
+            {sess.error && <p className="p-3 text-sm text-red-300 break-words">{sess.error}</p>}
+            {sess.ended ? (
+              <div className="h-80 flex items-center justify-center p-6 text-center text-slate-300">
+                {sess.status === "submitted" ? "Submission saved. Browser session finished." : "Session stopped. See the error above."}
+              </div>
+            ) : (
+              <iframe src={sess.debugUrl} className="w-full h-80 border-none" title={`Node ${idx + 1}`} />
+            )}
           </div>
         ))}
       </div>

@@ -50,7 +50,7 @@ export default function TargetPortal() {
               recorded — this is a mock target, nothing was sent anywhere real.)
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="space-y-3">
+            <form ref={form => { if (form) form.dataset.phishbaitReady = "true"; }} onSubmit={handleSubmit} className="space-y-3">
               <input name="name" placeholder="Full name" className="w-full border rounded px-3 py-2 text-sm" />
               <input name="email" type="email" placeholder="Email" className="w-full border rounded px-3 py-2 text-sm" />
               <input name="phone" type="tel" placeholder="Phone number" className="w-full border rounded px-3 py-2 text-sm" />

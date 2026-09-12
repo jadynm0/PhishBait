@@ -1,6 +1,8 @@
 import Steel from "steel-sdk";
-import { chromium } from "playwright-core";
-import { VictimPersona, SwarmStatus } from "./types";
+import { chromium, type Browser, type Page } from "playwright-core";
+import { installLocalDemoRelay, isLocalDemo } from "./localDemoRelay";
+import { saveSwarmNode } from "./swarmStore";
+import { VictimPersona, SwarmStatus, SwarmNode } from "./types";
 
 const steel = new Steel({
   steelAPIKey: process.env.STEEL_API_KEY,
@@ -12,47 +14,62 @@ export async function launchSwarmSession(
   onStatusUpdate: (status: SwarmStatus) => void
 ): Promise<{ sessionId: string; debugUrl: string }> {
   // 1. Create a cloud browser session in Steel.
+  const localDemo = isLocalDemo(new URL(targetUrl));
   const session = await steel.sessions.create({
-    useProxy: true,
-    solveCaptcha: true,
+    useProxy: !localDemo,
+    solveCaptcha: !localDemo,
   });
 
-  const debugUrl = session.debugUrl;
-  onStatusUpdate("booting");
+  const node: SwarmNode = { sessionId: session.id, debugUrl: session.debugUrl, personaName: persona.fullName, status: "booting", ended: false };
+  const update = (status: SwarmStatus, error?: string) => {
+    node.status = status;
+    node.error = error;
+    saveSwarmNode({ ...node });
+    onStatusUpdate(status);
+  };
+  update("booting");
 
-  // 2. Connect Playwright over CDP and drive the page. Runs async so the
-  // caller can return the debugUrl immediately for the UI to embed.
-  (async () => {
+  void (async () => {
+    let browser: Browser | undefined;
     try {
-      const browser = await chromium.connectOverCDP(session.websocketUrl);
-      const context = browser.contexts()[0] ?? (await browser.newContext());
-      const page = await context.newPage();
-
-      onStatusUpdate("navigating");
-      await page.goto(targetUrl, { waitUntil: "networkidle", timeout: 30000 });
-
-      onStatusUpdate("filling");
+      const connection = new URL(session.websocketUrl);
+      connection.searchParams.set("apiKey", process.env.STEEL_API_KEY || "");
+      browser = await chromium.connectOverCDP(connection.toString());
+      const context = browser.contexts()[0] ?? await browser.newContext();
+      await installLocalDemoRelay(context, new URL(targetUrl));
+      const page = context.pages()[0] ?? await context.newPage();
+      update("navigating");
+      const response = await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45000 });
+      if (!response || !response.ok()) throw new Error(`Target page returned HTTP ${response?.status() ?? "no response"}. Check the target URL.`);
+      if (/^\/(clone-portal\/|target-portal)/.test(new URL(targetUrl).pathname)) {
+        await page.locator('[data-phishbait-ready="true"]').waitFor({ timeout: 30000 });
+      }
+      update("filling");
       await fillPhishingForm(page, persona);
-
-      onStatusUpdate("submitted");
-      await page.waitForTimeout(4000);
-      await browser.close();
-      await steel.sessions.release(session.id);
+      update("submitted");
+      // Give the live viewer time to display the confirmation, then release billing.
+      await page.waitForTimeout(15000);
     } catch (err) {
-      console.error(`Swarm node ${session.id} error:`, err);
-      onStatusUpdate("failed");
+      const message = err instanceof Error ? err.message : "Browser automation failed.";
+      // Playwright errors may include the authenticated CDP URL.
+      const safeMessage = message.replace(/apiKey=[^&\s"']+/gi, "apiKey=[redacted]").split(process.env.STEEL_API_KEY || "__missing_key__").join("[redacted]");
+      update("failed", safeMessage);
+    } finally {
+      await browser?.close().catch(() => {});
       try {
         await steel.sessions.release(session.id);
       } catch {
-        // already released or unreachable
+        node.error = [node.error, "Could not confirm session release; check the Steel dashboard."].filter(Boolean).join(" ");
       }
+      node.ended = true;
+      saveSwarmNode({ ...node });
     }
   })();
 
-  return { sessionId: session.id, debugUrl };
+  return { sessionId: session.id, debugUrl: session.debugUrl };
 }
 
-async function fillPhishingForm(page: any, persona: VictimPersona) {
+async function fillPhishingForm(page: Page, persona: VictimPersona) {
   const inputMappings = [
     { selector: 'input[name*="name" i], input[placeholder*="name" i], input[id*="name" i]', val: persona.fullName },
     { selector: 'input[type="email"], input[name*="email" i], input[placeholder*="email" i]', val: persona.email },
@@ -76,7 +93,11 @@ async function fillPhishingForm(page: any, persona: VictimPersona) {
     'button[type="submit"], input[type="submit"], button:has-text("Submit"), button:has-text("Verify"), button:has-text("Confirm"), button:has-text("Next")'
   );
 
-  if (submitBtn) {
-    await submitBtn.click();
-  }
+  if (!submitBtn) throw new Error("No submit button was found on the target page.");
+  const logUrl = new URL("/api/target-logs", page.url()).href;
+  const [response] = await Promise.all([
+    page.waitForResponse(res => res.url() === logUrl && res.request().method() === "POST", { timeout: 20000 }),
+    submitBtn.click(),
+  ]);
+  if (!response.ok()) throw new Error(`Submission failed with HTTP ${response.status()}.`);
 }

@@ -70,7 +70,7 @@ Have this ready, calmly:
 ## Fallback checklist (things that break demos)
 
 - [ ] Venue wifi tested with your actual laptop, not assumed
-- [ ] `.env.local` has valid `STEEL_API_KEY` / `OPENROUTER_API_KEY` — test
+- [ ] `.env.local` has valid `STEEL_API_KEY` / `ANTHROPIC_API_KEY` — test
       same morning, keys can expire or hit quota
 - [ ] Backup video recorded and playable offline
 - [ ] `/scammer-db` flushed right before going on stage
